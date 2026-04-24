@@ -6,29 +6,46 @@ require('dotenv').config();
 const Reservation = require('./models/Reservation');
 const app = express();
 
-// --- 1. FIX CORS ---
-// You must allow your Vercel URL, not just localhost
+// 1. DISABLE BUFFERING
+// This stops Mongoose from waiting 10s when the connection isn't ready.
+// It will throw an error immediately instead of hanging.
+mongoose.set('bufferCommands', false);
+
+// 2. CORS CONFIGURATION
 app.use(cors({
-  origin: ["http://localhost:5173", "https://restaurant-reservation-zeta.vercel.app"], // Add your actual Vercel URL here
+  origin: ["http://localhost:5173", "https://restaurant-reservation-zeta.vercel.app"], 
   methods: ["GET", "POST", "DELETE"],
   credentials: true
 }));
 
 app.use(express.json());
 
-// --- 2. DATABASE CONNECTION ---
+// 3. DATABASE CONNECTION (Optimized for Serverless)
 const uri = process.env.MONGO_URI;
-// Added options for better stability in serverless environments
-mongoose.connect(uri, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-  .then(() => console.log("🚀 Connected to MongoDB"))
-  .catch(err => console.error("❌ Connection Error:", err));
 
-// --- 3. ROUTES ---
+const connectDB = async () => {
+  try {
+    if (mongoose.connection.readyState >= 1) return;
+    
+    console.log("⏳ Connecting to MongoDB...");
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 5000, // Timeout after 5 seconds
+    });
+    console.log("🚀 Connected to MongoDB");
+  } catch (err) {
+    console.error("❌ MongoDB Connection Error:", err.message);
+  }
+};
+
+// Initialize connection
+connectDB();
+
+// 4. ROUTES
 app.post('/api/reservations', async (req, res) => {
   try {
+    // Ensure DB is connected before operation
+    await connectDB(); 
+    
     const newBooking = new Reservation(req.body);
     await newBooking.save();
     res.status(201).json({ success: true, message: "Confirmed!" });
@@ -40,6 +57,7 @@ app.post('/api/reservations', async (req, res) => {
 
 app.get('/api/admin/reservations', async (req, res) => {
   try {
+    await connectDB();
     const bookings = await Reservation.find().sort({ createdAt: -1 });
     res.status(200).json(bookings);
   } catch (error) {
@@ -49,6 +67,7 @@ app.get('/api/admin/reservations', async (req, res) => {
 
 app.delete('/api/admin/reservations/:id', async (req, res) => {
   try {
+    await connectDB();
     await Reservation.findByIdAndDelete(req.params.id);
     res.status(200).json({ message: "Deleted" });
   } catch (error) {
@@ -56,8 +75,7 @@ app.delete('/api/admin/reservations/:id', async (req, res) => {
   }
 });
 
-// --- 4. FIX THE LISTEN BLOCK ---
-// Vercel handles the port. If we force port 5000, it will fail on Vercel.
+// 5. LISTEN BLOCK (Local Only)
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => console.log(`🚀 Local Server active on port ${PORT}`));
