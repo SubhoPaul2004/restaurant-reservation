@@ -43,14 +43,31 @@ connectDB();
 // 4. ROUTES
 app.post('/api/reservations', async (req, res) => {
   try {
-    // Ensure DB is connected before operation
-    await connectDB(); 
-    
+    // 1. THE GATEKEEPER: Wait until connection is fully established
+    // mongoose.connection.readyState: 0 = disconnected, 1 = connected, 2 = connecting
+    if (mongoose.connection.readyState !== 1) {
+      console.log("⏳ DB not ready, waiting for connection...");
+      await connectDB(); 
+    }
+
+    // 2. NOW execute the save
     const newBooking = new Reservation(req.body);
-    await newBooking.save();
+    const saved = await newBooking.save();
+    
+    console.log("✅ Reservation Saved:", saved._id);
     res.status(201).json({ success: true, message: "Confirmed!" });
+
   } catch (error) {
     console.error("❌ BACKEND ERROR:", error.message);
+    
+    // If it's still a connection issue, tell the user to retry
+    if (error.name === 'MongooseError' || error.message.includes('initial connection')) {
+      return res.status(503).json({ 
+        success: false, 
+        message: "Database warming up. Please try again in a moment." 
+      });
+    }
+
     res.status(500).json({ success: false, message: error.message });
   }
 });
